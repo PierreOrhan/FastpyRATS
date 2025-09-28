@@ -318,43 +318,43 @@ class Param:
         return p
 
 
+from pyRATS.fastKNN import KNN_KeOps
+import torch
+
 # includes self as the first neighbor
 # data is either X or distance matrix d_e
-def nearest_neighbors(data, k_nn, metric, n_jobs=-1, sort_results=True):
+def nearest_neighbors(data : np.ndarray, k_nn :int, metric: str) -> tuple[torch.Tensor,torch.Tensor]:
+    """
+        Efficient KNN, ran on GPU using pyKeops Library.
+    """
     n = data.shape[0]
     if k_nn > 1:
-        neigh = NearestNeighbors(n_neighbors=k_nn-1, metric=metric, n_jobs=n_jobs)
+        neigh = KNN_KeOps(K=k_nn-1,metric=metric)
+        data = torch.tensor(data,device="cuda")
         neigh.fit(data)
-        neigh_dist, neigh_ind = neigh.kneighbors()
-        neigh_dist = np.insert(neigh_dist, 0, np.zeros(n), axis=1)
-        neigh_ind = np.insert(neigh_ind, 0, np.arange(n), axis=1)
-        if sort_results:
-            inds = np.argsort(neigh_dist, axis=-1)
-            for i in range(neigh_ind.shape[0]):
-                neigh_ind[i,:] = neigh_ind[i,inds[i,:]]
-                neigh_dist[i,:] = neigh_dist[i,inds[i,:]]
+        neigh_ind, neigh_dist = neigh(data)
     else:
-        neigh_dist = np.zeros((n,1))
-        neigh_ind = np.arange(n).reshape((n,1)).astype('int')
-        
+        neigh_dist = torch.zeros((n,1), device="cuda")
+        neigh_ind = torch.arange(n, device="cuda",dtype=torch.int64)[:,None]
     return neigh_dist, neigh_ind
 
 # includes self as the first neighbor
 # data is either X or distance matrix d_e
 def radial_nearest_neighbors(data, radius, metric, n_jobs=-1, sort_results=True):
-    n = data.shape[0]
-    neigh = NearestNeighbors(radius=radius, metric=metric, n_jobs=n_jobs)
-    neigh.fit(data)
-    neigh_dist, neigh_ind = neigh.radius_neighbors()
-    for i in range(len(neigh_dist)):
-        neigh_dist[i] = np.insert(neigh_dist[i], 0, np.zeros(1))
-        neigh_ind[i] = np.insert(neigh_ind[i], 0, np.array([i]))
-        if sort_results:
-            inds = np.argsort(neigh_dist[i], axis=-1)
-            neigh_ind[i] = neigh_ind[i][inds]
-            neigh_dist[i] = neigh_dist[i][inds]
+    raise Exception("radial_nearest_neighbors not implemented yet with pyKEOPS, TODO")
+    # n = data.shape[0]
+    # neigh = NearestNeighbors(radius=radius, metric=metric, n_jobs=n_jobs)
+    # neigh.fit(data)
+    # neigh_dist, neigh_ind = neigh.radius_neighbors()
+    # for i in range(len(neigh_dist)):
+    #     neigh_dist[i] = np.insert(neigh_dist[i], 0, np.zeros(1))
+    #     neigh_ind[i] = np.insert(neigh_ind[i], 0, np.array([i]))
+    #     if sort_results:
+    #         inds = np.argsort(neigh_dist[i], axis=-1)
+    #         neigh_ind[i] = neigh_ind[i][inds]
+    #         neigh_dist[i] = neigh_dist[i][inds]
 
-    return neigh_dist, neigh_ind
+    # return neigh_dist, neigh_ind
 
 # |E| x |V|
 def incidence_matrix(neigh_ind, neigh_dist):
