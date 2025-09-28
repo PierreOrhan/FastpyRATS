@@ -14,6 +14,9 @@ from .common_ import LPCA, LKPCA
 from joblib import Parallel, delayed
 import cupy as cp
 
+from typing import Optional
+import torch
+
 #import sklearn.metrics._dist_metrics
 #sklearn.metrics._dist_metrics.EuclideanDistance = sklearn.metrics._dist_metrics.EuclideanDistance64
 
@@ -204,48 +207,73 @@ class Param:
         self.standardize = state['standardize']
         
     def eval_(self, opts):
-        k = opts['view_index']
-        mask = opts['data_mask']
-        
-        if self.algo == LPCA:
-            temp = np.dot(self.X[mask,:]-self.mu[k,:][np.newaxis,:],self.Psi[k,:,:])
-            n = self.X.shape[0]
-        else:
-            X_ = self.X[mask,:]
+        """
+            Batch evalution of all local views at once.
+            opts is a dictionary with the following keys:
+            - view_index: torch.Tensor[torch.int64] of shape (n,)
+                used to retrieve the view of each point.
+            - data_index: torch.Tensor[torch.int64] of shape (n,k)
+                used to retrieve the k-nn neighbors of each point
+        """
+        # Note: I think k is a poor variable name here, should be something like i.
+        # or view_index, keeping k to facilitate proof reading compare to old code.
+        k : torch.Tensor[torch.int64] = opts['view_index']
+        id_mask : torch.Tensor[torch.int64] = opts['data_index']
+
+        X_k = self.X[id_mask] # (n,k,p)
+
+        if self.algo==LPCA:
+            X_k = X_k - self.mu[k,:][...,None,:]
+            temp = (X_k)@(self.Psi[k,:,:])
+        else: # ISOMAP, LKPCA
             if self.standardize:
-                X_ = X_ - np.mean(X_,axis=0)[None,:]
-                X_ = X_/(np.std(X_, axis=0, ddof=1)[None,:]+1e-12)
-            temp = self.model[k].transform(X_)
-        
+                X_k = X_k - torch.mean(X_k,dim=1,keepdim=True)[:,None,:]
+                X_k = X_k/(torch.std(X_k, dim=1,keepdim=True,correction=1)[None,:]+1e-12)
+            # TODO: batch the following:
+            temp = torch.stack([self.model[k[i]].transform(X_k[i]) for i in range(X_k.shape[0])])
+
         if self.noise_var:
-            np.random.seed(self.noise_seed[k])
-            temp2 = np.random.normal(0, self.noise_var, (n, temp.shape[1]))
-            temp = temp + temp2[mask,:]
+            raise Exception("TODO: add support for noise")
+            # np.random.seed(self.noise_seed[k])
+            # temp2 = np.random.normal(0, self.noise_var, (n, temp.shape[1]))
+            # temp = temp + temp2[mask,:]
 
         if self.noise is not None:
-            temp = temp + self.noise[k, mask, :]
+            raise Exception("TODO: add support for noise")
+            # temp = temp + self.noise[k, mask, :]
             
         if self.add_dim:
-            temp = np.concatenate([temp,np.zeros((temp.shape[0],1))], axis=1)
+            raise Exception("TODO: add support for add_dim")
+            # temp = np.concatenate([temp,np.zeros((temp.shape[0],1))], axis=1)
         
         if self.b is None:
             return temp
         else:
-            temp = self.b[k]*temp
-            if self.T is not None:
-                temp = np.dot(temp, self.T[k,:,:])
-            if self.v is not None:
-                temp = temp + self.v[[k],:]
-            return temp
+            raise Exception("TODO: add batch support for b, T, v")
+            # temp = self.b[k]*temp
+            # if self.T is not None:
+            #     temp = np.dot(temp, self.T[k,:,:])
+            # if self.v is not None:
+            #     temp = temp + self.v[[k],:]
+            # return temp
     
-    def compute_local_distortion_(self, nbrhd_graph):
-        n = nbrhd_graph.get_num_nodes()
-        d_e = nbrhd_graph.sparse_matrix(symmetrize=True)
-        self.zeta = np.zeros(n)
-        for k in range(n):
-            U_k = nbrhd_graph.get_nbr_inds(k)
-            d_e_k = d_e[np.ix_(U_k, U_k)]
-            self.zeta[k] = compute_zeta(d_e_k, self.eval_({'view_index': k,  'data_mask': U_k}))
+    def compute_local_distortion_(self, nbrhd_graph, local_param_eval: Optional[torch.Tensor]=None):
+        """
+            Fast, batched local distortion computation using PyKeops
+        """
+        if local_param_eval is None:
+            local_param_eval = self.eval_({'view_index': np.arange(self.X.shape[0]), 
+                                           'data_index': nbrhd_graph.neigh_ind})
+        self.zeta[:] = fast_compute_zeta(nbrhd_graph, local_param_eval, self.X)
+
+        # Slower version, for reference:
+        # n = nbrhd_graph.get_num_nodes()
+        # d_e = nbrhd_graph.sparse_matrix(symmetrize=True)
+        # self.zeta = np.zeros(n)
+        # for k in range(n):
+        #     U_k = nbrhd_graph.get_nbr_inds(k)
+        #     d_e_k = d_e[np.ix_(U_k, U_k)]
+        #     self.zeta[k] = compute_zeta(d_e_k, self.eval_({'view_index': k,  'data_mask': U_k}))
     
     def replace_(self, new_param_ind):
         if self.algo in [LPCA]:
@@ -395,15 +423,39 @@ def to_dense(x):
     else:
         return x
     
+def fast_compute_zeta(nbrhd_graph,local_param_eval, X, U: Optional[torch.Tensor[torch.int64]]=None):
+    if U is None:
+        U = nbrhd_graph.neigh_ind
+    from pykeops.torch import LazyTensor
+    ## Local distances:
+    psi_i = LazyTensor(local_param_eval[:,:,None,:])  # (N, n, 1, d)
+    psi_j = LazyTensor(local_param_eval[:,None,:,:])  # (N, 1, n, d)
+    D_ij = ((psi_i - psi_j) ** 2).sum(-1)  # (N, n, n) symbolic matrix of squared distances
+    
+    ## original distances:
+    # Instead of storing them we recompute them one time as it's nearly free with KeOps:
+    x_i = LazyTensor(X[U][:,:,None,:])  # (N, n, 1, d)
+    x_j = LazyTensor(X[U][:,None,:,:])  # (N, 1, n, d)
+    D_e_ij = ((x_i - x_j) ** 2).sum(-1)  # (N, n, n) symbolic matrix of squared distances
+    Mask = (D_e_ij!=0) # Mask to filter out zero distances 
+
+    # Estimate distortion:
+    ## Compute z_eta through the ratio of the Lipschitz constant and the same but for contraction:
+    max_distortion = ((D_ij/(D_e_ij+1e-12))*Mask).max(dim=1).max(dim=1).values
+    max_contraction = ((D_ij/(D_e_ij+1e-12))*(1/Mask)).min(dim=1).min(dim=1).values
+    return (max_distortion/max_contraction)[:,0]
+
+
 def compute_zeta(d_e_mask0, Psi_k_mask):
-    d_e_mask = to_dense(d_e_mask0)
-    if d_e_mask.shape[0]==1:
-        return 1
-    d_e_mask_ = squareform(d_e_mask)
-    mask = d_e_mask_!=0
-    d_e_mask_ = d_e_mask_[mask]
-    disc_lip_const = pdist(Psi_k_mask)[mask]/d_e_mask_
-    return np.max(disc_lip_const)/(np.min(disc_lip_const) + 1e-12)
+    raise Exception("deprecated")
+    # d_e_mask = to_dense(d_e_mask0)
+    # if d_e_mask.shape[0]==1:
+    #     return 1
+    # d_e_mask_ = squareform(d_e_mask)
+    # mask = d_e_mask_!=0
+    # d_e_mask_ = d_e_mask_[mask]
+    # disc_lip_const = pdist(Psi_k_mask)[mask]/d_e_mask_
+    # return np.max(disc_lip_const)/(np.min(disc_lip_const) + 1e-12)
 
 def custom_procrustes(X, Y, compute_cost=False):
     n,m = X.shape

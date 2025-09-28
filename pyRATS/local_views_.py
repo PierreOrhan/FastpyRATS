@@ -4,6 +4,7 @@ import numpy as np
 from .common_ import *
 from .util_ import print_log, sub_dict, Param
 from .local_view_algos import lpca, lkpca, postprocess
+from .nbrhd_graph_ import NbrhdGraph
 
 class LocalViews:
     def __init__(
@@ -30,7 +31,7 @@ class LocalViews:
                                               self.global_start_time)
     
     # TODO: relax X to be a distance matrix
-    def fit(self, d, X, nbrhd_graph, local_opts):
+    def fit(self, d: int, X: np.ndarray, nbrhd_graph: NbrhdGraph, local_opts):
         n = nbrhd_graph.get_num_nodes()
         algo = local_opts['algo']
         self.log('Computing local views using ' + local_opts['algo'])
@@ -50,7 +51,8 @@ class LocalViews:
             local_param_pre = lkpca(d, X, nbrhd_graph, opts, verbose=self.verbose)
         
         self.local_param_pre = local_param_pre
-
+        
+        # TODO Pierre: change here
          # Patches on the data
         nbrhd_graph.truncate(local_opts['k'])
         self.U = nbrhd_graph.sparse_matrix(nbr_inds_only=True)

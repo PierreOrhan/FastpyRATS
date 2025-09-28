@@ -414,14 +414,16 @@ class BUML:
         )
         self.nbrhd_graph.fit(data)
         if local_subspaces is not None:
-            self.nbrhd_graph.compute_principal_angles(local_subspaces)
+            raise Exception("Not tested yet.")
+            # self.nbrhd_graph.compute_principal_angles(local_subspaces)
 
         if cond_num is not None:
-            self.nbrhd_graph.induce_connections(data, cond_num)
-            old_k = self.local_opts['k']
-            self.local_opts['k'] = self.nbrhd_graph.k_nn
-            self.local_opts['k_for_pca'] = max(self.local_opts['k_for_pca'], self.local_opts['k'])
-            self.global_opts['k'] = self.local_opts['k']
+            raise Exception("Not tested yet.")
+            # self.nbrhd_graph.induce_connections(data, cond_num)
+            # old_k = self.local_opts['k']
+            # self.local_opts['k'] = self.nbrhd_graph.k_nn
+            # self.local_opts['k_for_pca'] = max(self.local_opts['k_for_pca'], self.local_opts['k'])
+            # self.global_opts['k'] = self.local_opts['k']
 
     def fit_local_views(self, data):
         self.LocalViews = local_views_.LocalViews(self.exit_at, self.verbose, self.debug)
