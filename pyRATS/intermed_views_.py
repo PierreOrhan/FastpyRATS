@@ -3,7 +3,7 @@ import time
 import numpy as np
 import copy
 
-from .util_ import print_log, compute_zeta, procrustes_cost
+from .util_ import print_log, compute_zeta, procrustes_cost, fast_compute_zeta
 from .util_ import Param
 
 from scipy.spatial.distance import pdist, squareform
@@ -16,6 +16,11 @@ import itertools
 
 import queue
 import copy
+
+
+from .nbrhd_graph_ import NbrhdGraph
+from .util_ import Param
+import torch
 
 # merging s to m
 def merging_cost(s, m, Utilde_s, Utilde_m, d_e, local_param, intermed_opts):
@@ -31,6 +36,117 @@ def merging_cost(s, m, Utilde_s, Utilde_m, d_e, local_param, intermed_opts):
 
     return c
 
+def batch_cost_of_moving(k : torch.IntTensor,nbrhd_graph: NbrhdGraph,
+                         local_param: Param,
+                         c,n_C,Utilde,eta_min,eta_max,intermed_opts):
+    """
+        Computes the cost of moving for every point in parallel.
+        Inputs:
+            k: index tensor...
+            nbrhd_graph: 
+    """
+    c_k = c[k]
+    # Compute |C_{c_k}|
+    n_C_c_k = n_C[c_k]
+
+    filter_eta = n_C_c_k >= eta_min
+    
+    # Check if |C_{c_k}| < eta_{min}
+    # If not then c_k is already
+    # an intermediate cluster
+    # TODO: perform the rest only for the element not validating filter
+
+    # Compute neighboring clusters c_{U_k} of x_k
+    c_U_k = c[nbrhd_graph.neigh_ind]
+    c_U_k_uniq = [torch.unique(cuk).tolist() for cuk in c_U_k]
+    # cost_x_k_to =  [torch.zeros(len(c)) + np.inf for c in c_U_k_uniq]
+    # U_k_list = list(U_k)
+
+    # For all m in c_{U_k} that verify the conditions
+    # compute cost of moving x_k to m
+    max_len = [len(cuku) for cuku in c_U_k_uniq]
+    # First generate the stack:
+    c_U_k_stack = [torch.nn.functional.pad(cuku, (0, max_len - cuku.shape[0]),value=idc) for idc,cuku in zip(k,c_U_k_uniq)]
+    c_U_k_stack = torch.stack(c_U_k_stack, dim=0)
+
+    n_C_m = n_C[c_U_k_stack] # shape (len(k), max_len)
+    candidate = (n_C_m>=n_C_c_k[:,None])
+    
+    if intermed_opts['cost_fn'] == 'distortion':
+        
+        Utilde_m = Utilde[c_U_k_stack] # shape (len(k), max_len,number_neighbors (?))
+        U_k = nbrhd_graph.U[k] # set of neighbors of k (len(k), number_neighbors)
+
+        # Compute union of Utilde_m U_k
+        ## Note: we need to be careful on the nature of Utilde, its length might change.
+        # For now: make the code assuming the length is fixed, and in a second time we will deal with this?
+        
+        U_k_rep = torch.concat([U_k[:,None,:] for _ in range(Utilde_m.shape[1])],dim=1)
+
+        U_k_U_Utilde_m = torch.concat([Utilde_m,U_k_rep],dim=-1)
+        # At this stage, we have repetition of multiple neighborhoods.
+        # the Param eval averages across the view_index and projection with PSI are independent per neighbor
+        # consequently it is ok to have repetition.
+        # Similarly, the compute_zeta performs a (neighbor,neighbor) distance matrix computations
+        # and then take the min of min and max of max to compute distortion and contraction
+        # consequently, repetition is also ok here.
+        local_param_eval = local_param.eval_({'view_index': c_U_k_stack,
+                                              'data_mask': U_k_U_Utilde_m})
+        cost_x_k_to = fast_compute_zeta(nbrhd_graph,local_param_eval,
+                                        local_param.X, U=U_k_U_Utilde_m)
+        
+        # # Compute the cost of moving x_k to mth cluster,
+        # # that is cost_{x_k \rightarrow m}
+        # cost_x_k_to[i] = compute_zeta(d_e[np.ix_(U_k_U_Utilde_m,U_k_U_Utilde_m)],
+        #                         local_param.eval_({'view_index': m,
+        #                                             'data_mask': U_k_U_Utilde_m}))
+    else: # alignment error
+        cost_x_k_to[i] = procrustes_cost(local_param.eval_({'view_index': k, 'data_mask': U_k_list}),
+                                            local_param.eval_({'view_index': m, 'data_mask': U_k_list}))
+
+    # TODO: filter these costs with candidate and filter_eta!
+
+    # Iterate over all m in c_{U_k}
+    i = 0
+    for m in c_U_k_uniq:
+        if m == c_k:
+            i += 1
+            continue
+            
+        # Compute |C_{m}|
+        n_C_m = n_C[m]
+        # Check if |C_{m}| < eta_{max}. If not
+        # then mth cluster has reached the max
+        # allowed size of the cluster. Move on.
+        if n_C_m >= eta_max:
+            i += 1
+            continue
+        
+        # Check if |C_{m}| >= |C_{c_k}|. If yes, then
+        # mth cluster satisfies all required conditions
+        # and is a candidate cluster to move x_k in.
+        if n_C_m >= n_C_c_k:
+            if intermed_opts['cost_fn'] == 'distortion':
+                # Compute union of Utilde_m U_k
+                U_k_U_Utilde_m = list(U_k.union(Utilde[m]))
+                # Compute the cost of moving x_k to mth cluster,
+                # that is cost_{x_k \rightarrow m}
+                cost_x_k_to[i] = compute_zeta(d_e[np.ix_(U_k_U_Utilde_m,U_k_U_Utilde_m)],
+                                      local_param.eval_({'view_index': m,
+                                                         'data_mask': U_k_U_Utilde_m}))
+            else: # alignment error
+                cost_x_k_to[i] = procrustes_cost(local_param.eval_({'view_index': k, 'data_mask': U_k_list}),
+                                                 local_param.eval_({'view_index': m, 'data_mask': U_k_list}))
+                
+        i += 1
+    
+
+    
+    # # Check if |C_{c_k}| < eta_{min}
+    # # If not then c_k is already
+    # # an intermediate cluster
+    # if n_C_c_k >= eta_min:
+    #     return np.inf, -1
 
 # Computes cost_k, d_k (dest_k)
 def cost_of_moving(k, d_e, neigh_ind_k, U_k, local_param, c, n_C,
@@ -113,6 +229,33 @@ class IntermedViews:
                                               self.local_start_time, 
                                               self.global_start_time)
     
+    def batch_best(self,U,local_param,intermed_opts):
+        n = U.shape[0]
+        c = torch.arange(n,device="cuda")
+        k = torch.arange(n,device="cuda")
+        n_C = torch.zeros(n,dtype=torch.float32,device="cuda") + 1
+        Clstr = list(map(set, np.arange(n).reshape((n,1)).tolist()))
+
+        U_ = U.clone()
+        Utilde = U.clone()
+        
+        eta_max = intermed_opts['eta_max']
+        cost = torch.zeros(n,device="cuda")+torch.inf
+        dest = torch.zeros(n,dtype=torch.int64,device="cuda")-1
+        # Vary eta from 2 to eta_{min}
+        self.log('Constructing intermediate views.')
+        for eta in range(2,intermed_opts['eta_min']+1):
+            self.log('eta = %d.' % eta)
+            self.log('#non-empty views with sz < %d = %d' % (eta, np.sum((n_C > 0)*(n_C < eta))))
+            self.log('#nodes in views with sz < %d = %d' % (eta, np.sum(n_C[c]<eta)))
+            
+            # def target_proc(p_num, chunk_sz, n_, Utilde, n_C, c, S):
+            
+            
+            cost_, dest_ = batch_cost_of_moving(k,neigh_graph, U_[k1], local_param,
+                                                c, n_C, Utilde, eta, eta_max, intermed_opts) #d_e,
+                
+                
     def best(self, d_e, U, local_param, intermed_opts):
         n = d_e.shape[0]
         c = np.arange(n)
@@ -403,12 +546,12 @@ class IntermedViews:
         q_.close()
         return c, n_C
     
-    def fit(self, d, d_e, U, local_param, intermed_opts):
-        n = d_e.shape[0]
+    def fit(self, d, nbrhd_graph : , local_param, intermed_opts): #d_e,
+        n = U.shape[0] #d_e
         if (intermed_opts['eta_min'] > 1) or (intermed_opts['c'] is not None):
             if intermed_opts['c'] is None:
                 if intermed_opts['algo'] == 'best':
-                    c, n_C = self.best(d_e, U, local_param, intermed_opts)
+                    c, n_C = self.batch_best( U, local_param, intermed_opts)
                 else:
                     neigh_ind = []
                     for i in range(n):

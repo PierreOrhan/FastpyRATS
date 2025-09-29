@@ -434,9 +434,11 @@ class BUML:
 
     def fit_intermediate_views(self):
         self.IntermedViews = intermed_views_.IntermedViews(self.exit_at, self.verbose, self.debug)
-        self.IntermedViews.fit(self.d, self.nbrhd_graph.sparse_matrix(symmetrize=True), self.LocalViews.U,
-                              self.LocalViews.local_param_post,
-                              self.intermed_opts)
+        self.IntermedViews.fit(self.d, 
+                               self.nbrhd_graph, #.sparse_matrix(symmetrize=True), 
+                               self.LocalViews.U,
+                            self.LocalViews.local_param_post,
+                            self.intermed_opts)
         
     def fit_global_views(self):
         self.GlobalViews = global_views_.GlobalViews(self.exit_at, self.verbose, self.debug)
