@@ -33,7 +33,7 @@ def lpca(d: int, X: np.ndarray, nbrhd_graph: NbrhdGraph,
     local_param.mu = torch.zeros((n,p),device="cuda")
     local_param.zeta = torch.zeros(n,device="cuda")
     local_param.var_explained = torch.zeros((n,p),device="cuda")
-    n_pc_dir_chosen = torch.zeros(X.shape[0],device="cuda")
+    local_param.n_pc_dir_chosen = torch.zeros(X.shape[0],device="cuda")
 
 
     U = nbrhd_graph.neigh_ind # (n,k)    

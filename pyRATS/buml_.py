@@ -427,7 +427,8 @@ class BUML:
 
     def fit_local_views(self, data):
         self.LocalViews = local_views_.LocalViews(self.exit_at, self.verbose, self.debug)
-        self.LocalViews.fit(self.d, data, copy.deepcopy(self.nbrhd_graph), self.local_opts)
+        self.LocalViews.fit(self.d, data, self.nbrhd_graph, self.local_opts)
+        # self.LocalViews.fit(self.d, data, copy.deepcopy(self.nbrhd_graph), self.local_opts)
         self.LocalViews.postprocess(self.nbrhd_graph, self.local_opts)
         
 

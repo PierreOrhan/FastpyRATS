@@ -6,6 +6,8 @@ from .util_ import print_log, sub_dict, Param
 from .local_view_algos import lpca, lkpca, postprocess
 from .nbrhd_graph_ import NbrhdGraph
 
+import torch
+
 class LocalViews:
     def __init__(
             self,
@@ -55,9 +57,9 @@ class LocalViews:
         # TODO Pierre: change here
          # Patches on the data
         nbrhd_graph.truncate(local_opts['k'])
-        self.U = nbrhd_graph.sparse_matrix(nbr_inds_only=True)
+        self.U = nbrhd_graph.neigh_ind  #nbrhd_graph.sparse_matrix(nbr_inds_only=True)
         self.local_param_post = self.local_param_pre
-        self.local_param_post.b = np.ones(n)
+        self.local_param_post.b = torch.ones(n,device="cuda")
 
     def postprocess(self, nbrhd_graph, local_opts):
         if local_opts['to_postprocess']:

@@ -32,11 +32,22 @@ class KNN_KeOps:
         
         self.x_train = x_train
 
-    def __call__(self,  x_test: torch.Tensor):
+    def __call__(self,  x_test: torch.Tensor, remove_first: bool = True) -> tuple[torch.IntTensor, torch.Tensor]:
         """
-            TODO: verify if for each query we should return the point or only its neighbors...
+            Perform K-NN query on the test set x_test.
+            Returns:
+                indices: torch.IntTensor of shape (n_test, K-1)
+                    Indices of the K-1 nearest neighbors in x_train for each point in x_test.
+                dists: torch.Tensor of shape (n_test, K-1)
+                    Distances to the K-1 nearest neighbors in x_train for each point in x_test.
+            Note: this K-NN query automatically sort the neighbors by increasing distance.
         """
         # Actual K-NN query:
         indices = self.KNN_fun(x_test, self.x_train)
         dists = self.KNN_dist(x_test, self.x_train)
+
+        if remove_first:
+            # Remove the first column which, if x_train=x_test and all other dist are none 0, is the point itself
+            # TODO: maybe add a safe check that the first column is indeed the point (compare it to arange(len(x_test)))
+            return indices[:,1:], dists[:,1:]
         return indices, dists

@@ -12,7 +12,7 @@ import os
 import pickle
 from .common_ import LPCA, LKPCA
 from joblib import Parallel, delayed
-import cupy as cp
+# import cupy as cp
 
 from typing import Optional
 import torch
@@ -210,15 +210,15 @@ class Param:
         """
             Batch evalution of all local views at once.
             opts is a dictionary with the following keys:
-            - view_index: torch.Tensor[torch.int64] of shape (n,)
+            - view_index: torch.IntTensor of shape (n,)
                 used to retrieve the view of each point.
-            - data_index: torch.Tensor[torch.int64] of shape (n,k)
+            - data_index: torch.IntTensor of shape (n,k)
                 used to retrieve the k-nn neighbors of each point
         """
         # Note: I think k is a poor variable name here, should be something like i.
         # or view_index, keeping k to facilitate proof reading compare to old code.
-        k : torch.Tensor[torch.int64] = opts['view_index']
-        id_mask : torch.Tensor[torch.int64] = opts['data_index']
+        k : torch.IntTensor = opts['view_index']
+        id_mask : torch.IntTensor = opts['data_index']
 
         X_k = self.X[id_mask] # (n,k,p)
 
@@ -351,7 +351,7 @@ import torch
 
 # includes self as the first neighbor
 # data is either X or distance matrix d_e
-def nearest_neighbors(data : np.ndarray, k_nn :int, metric: str) -> tuple[torch.Tensor,torch.Tensor]:
+def nearest_neighbors(data : np.ndarray, k_nn :int, metric: str) -> tuple[torch.IntTensor,torch.IntTensor]:
     """
         Efficient KNN, ran on GPU using pyKeops Library.
     """
@@ -423,7 +423,7 @@ def to_dense(x):
     else:
         return x
     
-def fast_compute_zeta(nbrhd_graph,local_param_eval, X, U: Optional[torch.Tensor[torch.int64]]=None):
+def fast_compute_zeta(nbrhd_graph,local_param_eval, X, U: Optional[torch.IntTensor]=None):
     if U is None:
         U = nbrhd_graph.neigh_ind
     from pykeops.torch import LazyTensor
@@ -1048,53 +1048,54 @@ def recompute_dist_using_tear_cupy(
     debug=False,
     device_num=1
 ):
-    cp.cuda.Device(device_num).use()
-    n = dist.shape[0]
-    dist = cp.asarray(dist.astype('float32'))
-    pts_across_tear = cp.asarray(pts_across_tear)
-    if debug:
-        dists = [cp.asnumpy(dist.copy())]
+    raise Exception("To FIX")
+    # cp.cuda.Device(device_num).use()
+    # n = dist.shape[0]
+    # dist = cp.asarray(dist.astype('float32'))
+    # pts_across_tear = cp.asarray(pts_across_tear)
+    # if debug:
+    #     dists = [cp.asnumpy(dist.copy())]
 
-    start_end_inds = []
-    chunk_sz = n//n_batches
-    for j in range(n_batches):
-        start_ind = j*chunk_sz
-        if j < n_batches-1:
-            end_ind = start_ind+chunk_sz
-        else:
-            end_ind = n
-        start_end_inds.append((start_ind, end_ind))
+    # start_end_inds = []
+    # chunk_sz = n//n_batches
+    # for j in range(n_batches):
+    #     start_ind = j*chunk_sz
+    #     if j < n_batches-1:
+    #         end_ind = start_ind+chunk_sz
+    #     else:
+    #         end_ind = n
+    #     start_end_inds.append((start_ind, end_ind))
 
-    for i_crossing in range(max_crossings):
-        old_dist = dist.copy()
-        dist_from_pts_across_tear = dist[pts_across_tear,:].T.copy() # n x n_pts_across_tear
+    # for i_crossing in range(max_crossings):
+    #     old_dist = dist.copy()
+    #     dist_from_pts_across_tear = dist[pts_across_tear,:].T.copy() # n x n_pts_across_tear
 
-        # Process each batch on GPU
-        for start_ind, end_ind in start_end_inds:
-            rows = dist[start_ind:end_ind, :]  # (batch_size, n)
-            cross_rows = dist_from_pts_across_tear[start_ind:end_ind,:]  # (batch_size, n_pts_across_tear)
+    #     # Process each batch on GPU
+    #     for start_ind, end_ind in start_end_inds:
+    #         rows = dist[start_ind:end_ind, :]  # (batch_size, n)
+    #         cross_rows = dist_from_pts_across_tear[start_ind:end_ind,:]  # (batch_size, n_pts_across_tear)
 
-            # Compute batched min
-            temp = cross_rows[:, :, None] + dist_from_pts_across_tear.T[None, :, :]  # shape: (batch, n_pts_across_tear, n)
-            min_update = cp.min(temp, axis=1)  # shape: (batch, n)
+    #         # Compute batched min
+    #         temp = cross_rows[:, :, None] + dist_from_pts_across_tear.T[None, :, :]  # shape: (batch, n_pts_across_tear, n)
+    #         min_update = cp.min(temp, axis=1)  # shape: (batch, n)
 
-            # Element-wise min with original
-            rows = cp.minimum(rows, min_update)
+    #         # Element-wise min with original
+    #         rows = cp.minimum(rows, min_update)
 
-            # Write back
-            dist[start_ind:end_ind, :] = rows
+    #         # Write back
+    #         dist[start_ind:end_ind, :] = rows
 
-        if debug:
-            dists.append(cp.asnumpy(dist.copy()))
+    #     if debug:
+    #         dists.append(cp.asnumpy(dist.copy()))
 
-        diff = cp.abs(dist - old_dist) / (old_dist + 1e-12)
-        mean_abs_rel_diff = np.ma.masked_invalid(cp.asnumpy(diff)).mean()
-        print('Mean absolute relative difference in distances:', mean_abs_rel_diff, flush=True)
+    #     diff = cp.abs(dist - old_dist) / (old_dist + 1e-12)
+    #     mean_abs_rel_diff = np.ma.masked_invalid(cp.asnumpy(diff)).mean()
+    #     print('Mean absolute relative difference in distances:', mean_abs_rel_diff, flush=True)
 
-        if mean_abs_rel_diff < tol:
-            break
+    #     if mean_abs_rel_diff < tol:
+    #         break
 
-    if debug:
-        return cp.asnumpy(dist), dists
-    else:
-        return cp.asnumpy(dist)
+    # if debug:
+    #     return cp.asnumpy(dist), dists
+    # else:
+    #     return cp.asnumpy(dist)
