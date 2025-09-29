@@ -38,6 +38,7 @@ def lpca(d: int, X: np.ndarray, nbrhd_graph: NbrhdGraph,
 
     U = nbrhd_graph.neigh_ind # (n,k)    
     X = torch.tensor(X,dtype=torch.float32).to("cuda")
+    local_param.X = X
     X_k = X[U] # (n,k,p)
     xbar_k = torch.mean(X_k,axis=1,keepdim=True) #average across each neighborhood (n,1,p)
     

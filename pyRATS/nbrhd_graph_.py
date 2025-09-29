@@ -62,16 +62,17 @@ class NbrhdGraph:
         self.k_nn = k_nn_new
 
     def sparse_matrix(self, nbr_inds_only = False, symmetrize=False):
-        if nbr_inds_only:
-            n,k = self.neigh_ind.shape
-            output = sparse_matrix(self.neigh_ind, np.ones((n, k), dtype=bool))
-        else:
-            output = sparse_matrix(self.neigh_ind, self.neigh_dist)
+        raise Exception("sparse matrix is deprecated")
+        # if nbr_inds_only:
+        #     n,k = self.neigh_ind.shape
+        #     output = sparse_matrix(self.neigh_ind, np.ones((n, k), dtype=bool))
+        # else:
+        #     output = sparse_matrix(self.neigh_ind, self.neigh_dist)
         
-        if symmetrize:
-            output = output.maximum(output.transpose())
+        # if symmetrize:
+        #     output = output.maximum(output.transpose())
         
-        return output
+        # return output
     
     def get_distance_to_kth_nbr(self, k):
         return self.neigh_dist[:,k-1]

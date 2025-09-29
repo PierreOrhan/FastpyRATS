@@ -64,8 +64,7 @@ class LocalViews:
     def postprocess(self, nbrhd_graph, local_opts):
         if local_opts['to_postprocess']:
             self.local_param_post = postprocess(
-                self.U,
-                nbrhd_graph.sparse_matrix(symmetrize=True), 
+                nbrhd_graph,  #.sparse_matrix(symmetrize=True)
                 self.local_param_pre,
                 local_opts
             )

@@ -8,10 +8,10 @@ from ..common_ import *
 from ..util_ import compute_zeta,Param, fast_compute_zeta
 from ..nbrhd_graph_ import NbrhdGraph
 import torch
-def postprocess(X: np.ndarray, nbrhd_graph: NbrhdGraph, local_param_pre: Param, opts):
-    n = U.shape[0]
-    
+def postprocess(nbrhd_graph: NbrhdGraph, local_param_pre: Param, opts):
     U = nbrhd_graph.neigh_ind
+    X = local_param_pre.X
+    n = U.shape[0]
     local_param_eval = local_param_pre.eval_({'view_index': torch.arange(n,device="cuda"),
                                               'data_index': U})
     
@@ -19,7 +19,7 @@ def postprocess(X: np.ndarray, nbrhd_graph: NbrhdGraph, local_param_pre: Param, 
 
     print(r'Maximum local distortion before postprocessing is: %0.4f' % torch.max(local_param_pre.zeta))
 
-    new_param_of = np.arange(n, dtype=int) # new param of
+    new_param_of = torch.arange(n, dtype=int,device="cuda") # new param of
 
     ### PostProcessing:
     some_param_changed = True
@@ -41,28 +41,29 @@ def postprocess(X: np.ndarray, nbrhd_graph: NbrhdGraph, local_param_pre: Param, 
                                     for idc,c in enumerate(cand_k)])
             # TODO check: cand_k should be of shape (n, max_len)
 
-            ## For every points, and for every candidate, 
-            # compute the local distortion if we replace the parameter:
-            view_index = new_param_of[cand_k].reshape(-1)
-            U_stack = torch.stack([U for _ in range(cand_k.shape[1])],dim=1).reshape(-1, U.shape[1])
-            local_param_eval_kponUk = local_param_pre.eval_({'view_index': view_index,
-                                                            'data_index': U_stack})
-            # (n*max_len, k, d)
-            zeta_kkp = fast_compute_zeta(nbrhd_graph, local_param_eval_kponUk, X,U_stack)
-            zeta_kkp = zeta_kkp.reshape(n, -1) #(n, max_len)
-            
-            # For every point where there is at least one candidate with lower distortion, we pick the best one
-            improved = zeta_kkp < local_param_pre.zeta[:,None]
-            improved_any = improved.any(dim=1)
-            improved_idx = torch.where(improved_any)[0]
-            if len(improved_idx)>0:
-                best_cand_idx = torch.argmin(zeta_kkp, dim=1)[improved_any]
-                # Update the parameters for the improved ones
-                local_param_pre.zeta[improved_idx] = zeta_kkp[:,best_cand_idx]
-                new_param_of[improved_idx] = new_param_of[cand_k[improved_idx][:,best_cand_idx]]
-                some_param_changed = True
-            else:
-                some_param_changed = False
+        ## For every points, and for every candidate, 
+        # compute the local distortion if we replace the parameter:
+        view_index = new_param_of[cand_k].reshape(-1)
+        U_stack = torch.stack([U for _ in range(cand_k.shape[1])],dim=1).reshape(-1, U.shape[1])
+        local_param_eval_kponUk = local_param_pre.eval_({'view_index': view_index,
+                                                        'data_index': U_stack})
+        # (n*max_len, k, d)
+        zeta_kkp = fast_compute_zeta(nbrhd_graph, local_param_eval_kponUk, X,U_stack)
+        zeta_kkp = zeta_kkp.reshape(n, -1) #(n, max_len)
+        
+        # For every point where there is at least one candidate with lower distortion, we pick the best one
+        improved = zeta_kkp < local_param_pre.zeta[:,None]
+        improved_any = improved.any(dim=1)
+        improved_idx = torch.where(improved_any)[0]
+        if len(improved_idx)>0:
+            best_cand_idx = torch.argmin(zeta_kkp, dim=1)[improved_any]
+            # Update the parameters for the improved ones
+            local_param_pre.zeta[improved_idx] = zeta_kkp[improved_idx,best_cand_idx]
+            new_param_of[improved_idx] = new_param_of[cand_k[improved_idx,best_cand_idx]]
+            some_param_changed = True
+        else:
+            some_param_changed = False
+        # print(torch.sum(improved_any))
 
     local_param_pre.replace_(new_param_of)
     print(f'Maximum local distoriton after post-processing is: %0.4f' % (torch.max(local_param_pre.zeta)))

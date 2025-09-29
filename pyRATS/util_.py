@@ -249,13 +249,18 @@ class Param:
         if self.b is None:
             return temp
         else:
-            raise Exception("TODO: add batch support for b, T, v")
-            # temp = self.b[k]*temp
-            # if self.T is not None:
-            #     temp = np.dot(temp, self.T[k,:,:])
-            # if self.v is not None:
-            #     temp = temp + self.v[[k],:]
-            # return temp
+            if temp.shape[0]!=self.b.shape[0]:
+                shapetemp = temp.shape
+                temp = (self.b[:,None]*temp.reshape(self.b.shape[0],-1)).reshape(shapetemp)
+            else:
+                temp = (self.b[:,None,None]*temp)
+            if self.T is not None:
+                raise Exception("TODO: add batch support for T")
+                # temp = np.dot(temp, self.T[k,:,:])
+            if self.v is not None:
+                raise Exception("TODO: add batch support for v")
+                temp = temp + self.v[[k],:]
+            return temp
     
     def compute_local_distortion_(self, nbrhd_graph, local_param_eval: Optional[torch.Tensor]=None):
         """
